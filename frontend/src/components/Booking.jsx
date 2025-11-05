@@ -5,6 +5,7 @@ import './Booking.scss';
 function Booking() {
   const [fromCity, setFromCity] = useState("");
   const [toCity, setToCity] = useState("");
+  const [travelDate, setTravelDate] = useState("");
   const [result, setResult] = useState("");
   const [seatPreference, setSeatPreference] = useState("Window");
   const [loading, setLoading] = useState(false);
@@ -21,6 +22,7 @@ function Booking() {
         body: JSON.stringify({
           from_city: fromCity,
           to_city: toCity,
+          travelDate: travelDate,
           seat_preference: seatPreference,
         }),
       });
@@ -67,6 +69,21 @@ function Booking() {
               value={toCity}
               onChange={(e) => setToCity(e.target.value)}
               placeholder="Enter destination city"
+              required
+              className="w-full border border-gray-300 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+          </div>
+
+          {/* Travel Date */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">
+              Travel Date
+            </label>
+            <input
+              type="date"
+              value={travelDate}
+              onChange={(e) => setTravelDate(e.target.value)}
+              placeholder="Enter Travel Date"
               required
               className="w-full border border-gray-300 rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
             />

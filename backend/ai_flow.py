@@ -1,117 +1,159 @@
-import statistics
+from dotenv import load_dotenv
+import os
 import random
-from typing import TypedDict, List, Dict
+from datetime import datetime
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 
-# ---- SAMPLE DATA ----
-flights = [
+# Load environment variables
+load_dotenv()
+
+# Initialize the LLM (OpenAI via LangChain)
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    temperature=0.7,
+    api_key=os.getenv("OPENAI_API_KEY")
+)
+
+# Define workflow state
+class BookingState(dict):
+    location_from: str
+    location_to: str
+    travel_date: str
+    seat_preference: str
+    flights: list
+    hotels: list
+    best_flight: dict
+    best_hotel: dict
+    transaction_id: str
+    summary: str
+
+
+# 1️⃣ Get Flights
+def get_flights(state: BookingState):
+    state["flights"] = [
     {"id": 1, "name": "Air India", "from": "Delhi", "to": "Paris", "price": 450, "rating": 4.5},
     {"id": 2, "name": "Indigo", "from": "Delhi", "to": "Paris", "price": 400, "rating": 4.2},
     {"id": 3, "name": "Vistara", "from": "Delhi", "to": "Paris", "price": 480, "rating": 4.7},
     {"id": 4, "name": "SpiceJet", "from": "Delhi", "to": "Paris", "price": 370, "rating": 3.9},
-    {"id": 5, "name": "Lufthansa", "from": "Mumbai", "to": "Berlin", "price": 500, "rating": 4.6},
-]
+    {"id": 5, "name": "Lufthansa", "from": "Mumbai", "to": "Berlin", "price": 500, "rating": 4.6}
+    ]
+    return state
 
-hotels = [
+
+# 2️⃣ Get Hotels
+def get_hotels(state: BookingState):
+    state["hotels"] = [
     {"id": 1, "name": "Hotel Le Grand", "city": "Paris", "price": 150, "rating": 4.8},
     {"id": 2, "name": "Budget Stay", "city": "Paris", "price": 80, "rating": 3.9},
     {"id": 3, "name": "Comfort Inn", "city": "Paris", "price": 120, "rating": 4.4},
     {"id": 4, "name": "Luxury Palace", "city": "Paris", "price": 250, "rating": 4.9},
-    {"id": 5, "name": "Downtown Suites", "city": "Berlin", "price": 160, "rating": 4.3},
-]
+    {"id": 5, "name": "Downtown Suites", "city": "Berlin", "price": 160, "rating": 4.3}
+    ]
+    return state
 
-# ---- BOOKING STATE ----
-class BookingState(TypedDict):
-    from_city: str
-    to_city: str
-    seat_preference: str
-    best_flight: Dict
-    best_hotel: Dict
-    booked: bool
-    seat_number: str
-    transaction_id: str
-    summary: str
 
-# ---- HELPERS ----
-def find_best(items: List[Dict], price_key="price") -> Dict:
-    prices = [i[price_key] for i in items]
-    median_price = statistics.median(prices)
-    normal_max = median_price * 1.2
-    candidates = [i for i in items if i[price_key] <= normal_max]
-    candidates.sort(key=lambda x: (-x["rating"], x[price_key]))
-    return candidates[0] if candidates else items[0]
+# 3️⃣ Ask OpenAI (LangChain) to pick best options
+def select_best_options(state: BookingState):
+    prompt = ChatPromptTemplate.from_template("""
+    You are an expert travel planner.
+    The user wants to travel from {location_from} to {location_to} on {travel_date}.
+    They prefer a {seat_preference} seat.
+    
+    Choose the best balance between rating and price from the options below.
+    
+    Flights: {flights}
+    Hotels: {hotels}
 
-# ---- GRAPH NODES ----
-def select_flight(state: BookingState):
-    available = [f for f in flights if f["from"].lower() == state["from_city"].lower() and f["to"].lower() == state["to_city"].lower()]
-    if not available:
-        return {**state, "best_flight": {"name": "No flights found", "price": 0, "rating": 0}}
-    best = find_best(available)
-    return {**state, "best_flight": best}
+    Return a JSON object with chosen flight and hotel:
+    {{
+      "flight": {{ ... }},
+      "hotel": {{ ... }}
+    }}
+    """)
 
-def select_hotel(state: BookingState):
-    available = [h for h in hotels if h["city"].lower() == state["to_city"].lower()]
-    if not available:
-        return {**state, "best_hotel": {"name": "No hotels found", "price": 0, "rating": 0}}
-    best = find_best(available)
-    return {**state, "best_hotel": best}
+    chain = prompt | llm
+    result = chain.invoke({
+        "location_from": state["location_from"],
+        "location_to": state["location_to"],
+        "travel_date": state["travel_date"],
+        "seat_preference": state["seat_preference"],
+        "flights": state["flights"],
+        "hotels": state["hotels"]
+    })
+    import json
+    try:
+        parsed = json.loads(result.content)
+        state["best_flight"] = parsed.get("flight", {})
+        state["best_hotel"] = parsed.get("hotel", {})
+    except:
+        state["best_flight"] = state["flights"][0]
+        state["best_hotel"] = state["hotels"][0]
+    return state
 
-def assign_seat(state: BookingState):
-    pref = state.get("seat_preference", "Window")
-    seat_map = {"Window": ["A", "F"], "Aisle": ["C", "D"], "Middle": ["B", "E"]}
-    seat_letter = random.choice(seat_map.get(pref, ["A", "F"]))
-    seat_number = f"{random.randint(1, 30)}{seat_letter}"
-    return {**state, "seat_number": seat_number}
 
-def take_transaction(state: BookingState):
-    # Simulate payment gateway
-    flight_price = state["best_flight"].get("price", 0)
-    hotel_price = state["best_hotel"].get("price", 0)
-    total = flight_price + hotel_price
-    transaction_id = f"TXN-{random.randint(100000,999999)}"
-    print(f"Processed transaction {transaction_id} for amount ${total}")
-    return {**state, "transaction_id": transaction_id}
+# 4️⃣ Simulate Transaction Step
+def set_transaction(state: BookingState):
+    state["transaction_id"] = f"TXN-{random.randint(100000,999999)}"
+    return state
 
-def auto_book(state: BookingState):
-    return {**state, "booked": True}
 
-def summarize_booking(state: BookingState):
-    f, h = state["best_flight"], state["best_hotel"]
-    booked_text = "✅ Booking Confirmed!" if state.get("booked") else "❌ Not booked yet."
-    summary = (
-        f"{booked_text}\n\n"
-        f"✈️ Flight: {f['name']} (${f['price']}, {f['rating']}⭐)\n"
-        f"🪟 Seat: {state.get('seat_preference', '-')}, Seat No: {state.get('seat_number', '-')}\n"
-        f"🏨 Hotel: {h['name']} (${h['price']}, {h['rating']}⭐)\n"
-        f"💳 Transaction ID: {state.get('transaction_id', '-')}\n"
-        f"Route: {state['from_city']} ➡️ {state['to_city']}\n"
-        "Both are best rated and within normal price range."
-    )
-    return {**state, "summary": summary}
+# 5️⃣ Generate Final Summary
+def generate_summary(state: BookingState):
+    prompt = ChatPromptTemplate.from_template("""
+    You are an AI assistant confirming a travel booking.
 
-# ---- GRAPH DEFINITION ----
+    Flight: {best_flight}
+    Hotel: {best_hotel}
+    Transaction ID: {transaction_id}
+    Travel Date: {travel_date}
+    From: {location_from}
+    To: {location_to}
+    Seat Preference: {seat_preference}
+
+    Create a detailed and friendly booking summary for the user.
+    """)
+
+    chain = prompt | llm
+    result = chain.invoke({
+        "best_flight": state["best_flight"],
+        "best_hotel": state["best_hotel"],
+        "transaction_id": state["transaction_id"],
+        "travel_date": state["travel_date"],
+        "location_from": state["location_from"],
+        "location_to": state["location_to"],
+        "seat_preference": state["seat_preference"]
+    })
+    state["summary"] = result.content
+    return state
+
+
+# 🧩 Build LangGraph workflow
 workflow = StateGraph(BookingState)
-workflow.add_node("select_flight", select_flight)
-workflow.add_node("select_hotel", select_hotel)
-workflow.add_node("assign_seat", assign_seat)
-workflow.add_node("take_transaction", take_transaction)
-workflow.add_node("auto_book", auto_book)
-workflow.add_node("summarize_booking", summarize_booking)
+workflow.add_node("get_flights", get_flights)
+workflow.add_node("get_hotels", get_hotels)
+workflow.add_node("select_best_options", select_best_options)
+workflow.add_node("set_transaction", set_transaction)
+workflow.add_node("generate_summary", generate_summary)
 
-workflow.add_edge("select_flight", "select_hotel")
-workflow.add_edge("select_hotel", "assign_seat")
-workflow.add_edge("assign_seat", "take_transaction")
-workflow.add_edge("take_transaction", "auto_book")
-workflow.add_edge("auto_book", "summarize_booking")
-workflow.add_edge("summarize_booking", END)
-workflow.set_entry_point("select_flight")
+workflow.add_edge("get_flights", "get_hotels")
+workflow.add_edge("get_hotels", "select_best_options")
+workflow.add_edge("select_best_options", "set_transaction")
+workflow.add_edge("set_transaction", "generate_summary")
+workflow.add_edge("generate_summary", END)
 
-booking_graph = workflow.compile()
+workflow.add_edge("__start__", "get_flights")
 
-def run_booking(from_city: str, to_city: str, seat_preference: str):
-    result = booking_graph.invoke({
-        "from_city": from_city,
-        "to_city": to_city,
+graph = workflow.compile()
+
+
+def run_booking_flow(location_from, location_to, travel_date, seat_preference):
+    state = BookingState({
+        "location_from": location_from,
+        "location_to": location_to,
+        "travel_date": travel_date,
         "seat_preference": seat_preference
     })
+    result = graph.invoke(state)
     return result["summary"]
