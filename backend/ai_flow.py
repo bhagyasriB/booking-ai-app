@@ -4,6 +4,7 @@ import random
 from datetime import datetime
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import StateGraph, END
 
 # Load environment variables
@@ -145,7 +146,9 @@ workflow.add_edge("generate_summary", END)
 
 workflow.add_edge("__start__", "get_flights")
 
-graph = workflow.compile()
+# Add checkpointer (memory)
+memory = InMemorySaver()
+graph = workflow.compile(checkpointer=memory)
 
 
 def run_booking_flow(location_from, location_to, travel_date, seat_preference):
